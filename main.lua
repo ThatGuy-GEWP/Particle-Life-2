@@ -3,6 +3,17 @@ local particles = {}
 local colorsMax = 4;
 
 local colorAttractions
+local movespeedsum = 0
+
+local xt, yt = 0, 0
+
+function Lerp(a, b, t)
+    return a + (b - a) * t
+end
+
+function Clamp(v, min, max)
+    if v < min then return min elseif v > max then return max else return v end
+end
 
 function randomizeAttractions()
     for i = 1, colorsMax do
@@ -233,20 +244,20 @@ function rebuildWorldGrid()
         local posx = math.floor((value.x-0.9) / world.cellSize) + 1
         local posy = math.floor((value.y-0.9) / world.cellSize) + 1
 
-        if posx > world.cellSize or posx < 1 then
-            print(posx, value.x)
-        end
-        if posy > world.cellSize or posy < 1 then
-            print(posx, value.y)
-        end
+        -- if posx > world.cellSize or posx < 1 then
+        --     print(posx, value.x)
+        -- end
+        -- if posy > world.cellSize or posy < 1 then
+        --     print(posx, value.y)
+        -- end
 
-        if(world[posx] == nil or world[posx][posy] == nil) then
-            print("-------")
-            print(key)
-            print(posx, value.x, world.sizex)
-            print(posy, value.y, world.sizey)
-            love.timer.sleep(10)
-        end
+        -- if(world[posx] == nil or world[posx][posy] == nil) then
+        --     print("-------")
+        --     print(key)
+        --     print(posx, value.x, world.sizex)
+        --     print(posy, value.y, world.sizey)
+        --     love.timer.sleep(10)
+        -- end
 
         value.gridspace = {posx, posy}
         table.insert(world[posx][posy], key)
@@ -365,26 +376,71 @@ function updateParticles()
     end
 end
 
+local w, h
 local debug = false
 local fast = false
 
+local waterloop
+local movesound
+local globalTransform
+local camera
+
 function love.load()
-    math.randomseed(os.clock() + 25012)
-    math.random(math.random(-500,500))
-    colorsMax = 3
-    colorAttractions = {
-        {0.5,0,0},
-        {0,0.5,0},
-        {0,0,0.5},
+
+
+    local flags = {
+        msaa=4,
+        fullscreen = true
     }
 
-    initWorld(37,20,50)
-    love.window.setMode(world.cellSize * world.sizex, world.cellSize * world.sizey);
-    for i=1, 3500 do
+    love.window.setMode(900, 900, flags);
+
+    love.window.setPosition(0,0,0)
+
+    globalTransform = love.math.newTransform()
+    math.randomseed(os.clock() + 25012)
+    math.random(math.random(-500,500))
+
+    waterloop = love.audio.newSource("waterloop.wav", "stream")
+    movesound = love.audio.newSource("movingsound.wav", "stream")
+
+    waterloop:setVolume(0)
+    waterloop:play()
+    waterloop:setLooping(true)
+
+    movesound:setVolume(0)
+    movesound:play()
+    movesound:setLooping(true)
+    movesound:setPitch(1.5)
+
+    colorsMax = 3
+    colorAttractions = {
+        {-1,-1,-1},
+        {-1,-1,-1},
+        {-1,-1,-1},
+    }
+
+    w, h = love.graphics.getWidth(), love.graphics.getHeight()
+
+    initWorld(math.ceil(w/50)+1, math.ceil(h/50)+1, 50)
+
+    for i=1, 5000 do
         local col = math.random(1,colorsMax)
         createParticle(math.random(1, world.cellSize * world.sizex)+math.random(),math.random(1, world.cellSize * world.sizey)+math.random(), col)
     end
     updateParticles()
+
+    local wW, wH = world.cellSize*world.sizex, world.cellSize*world.sizey
+
+    camera = {x=-wW/2, y=-wH/2, zoom=1}
+
+    xt, yt = -wW/2, -wH/2
+
+
+    for i = 1, 20, 1 do
+        updateParticles()
+        rebuildWorldGrid()
+    end
 end
 
 local colors = {
@@ -395,18 +451,66 @@ local colors = {
     {1,1,1}
 }
 
+function addSum(curPart)
+    movespeedsum = movespeedsum + (math.abs(curPart.velx) + math.abs(curPart.vely))
+end
+function Line(sx, sy, ex, ey)
+    love.graphics.line(sx,sy,ex,ey)
+end
+function Circle(mode, x, y, size)
+    love.graphics.circle(mode,x,y,size)
+end
+function Point(x, y)
+    love.graphics.points(x,y)
+end
+function Rectange(mode,x,y,width, height)
+    love.graphics.rectangle(mode,x,y,width,height)
+end
+
+function love.mousemoved(x, y, dx, dy)
+    if love.mouse.isDown(1) then
+        xt = xt + dx
+        yt = yt + dy
+    end
+end
+
+local zoomTarget = 1
+
+function love.wheelmoved(x, y)
+    zoomTarget = zoomTarget + (y * 0.125)
+end
+
+
 function love.draw()
-    love.graphics.setBackgroundColor(0.07,0.05,0.05)
-    love.graphics.setColor(1,1,1,1)
+    local mx, my = love.mouse.getPosition()
+
+    zoomTarget = Clamp(zoomTarget, 1, 5)
+
+    camera.zoom = Lerp(camera.zoom, zoomTarget, 4 * love.timer.getDelta())
+
+    camera.x = Lerp(camera.x, xt, love.timer.getDelta())
+    camera.y = Lerp(camera.y, yt, love.timer.getDelta())
+
+    love.graphics.scale(camera.zoom, camera.zoom)
+    love.graphics.translate(camera.x + w/2/camera.zoom, camera.y + h/2/camera.zoom)
+    movespeedsum = 0
+
+    local w, h = world.sizex * world.cellSize, world.sizey * world.cellSize
+
+    love.graphics.setColor(0.07,0.05,0.05)
+    Rectange("fill", 0, 0, w, h)
+
+    love.graphics.setColor(1,1,1)
     if debug then
         for _, curPart in pairs(particles) do
+            addSum(curPart)
             if curPart.velx ~= 0 or curPart.vely ~= 0 then
                 love.graphics.setColor(1,0,0)
-                love.graphics.line(curPart.x, curPart.y, curPart.x + curPart.velx, curPart.y + curPart.vely)
+                Line(curPart.x, curPart.y, curPart.x + curPart.velx, curPart.y + curPart.vely)
             else
                 love.graphics.setColor(1,1,1)
             end
-            love.graphics.circle("fill", curPart.x, curPart.y, 2)
+            Circle("fill", curPart.x, curPart.y, 2)
         end
         for x = 1, world.sizex do
             for y = 1, world.sizey do
@@ -421,6 +525,7 @@ function love.draw()
         end
     elseif fast == false then
         for _, curPart in pairs(particles) do
+            addSum(curPart)
             local blurSteps = 4
             local blurSize = 6
             local blurMax = 0.07
@@ -428,39 +533,89 @@ function love.draw()
 
             for b = 1, blurSteps do
                 love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], blurper)
-                love.graphics.circle("fill", curPart.x, curPart.y, 3 + ((blurSize/blurSteps)*(b)))
+                Circle("fill", curPart.x, curPart.y, 3 + ((blurSize/blurSteps)*(b)))
             end
             love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], 1)
-            love.graphics.circle("fill", curPart.x, curPart.y, 3)
+            Circle("fill", curPart.x, curPart.y, 3)
         end
+        love.graphics.setColor(0,0,0,1)
+
+        local bs = 15
+
+        Rectange("fill", -bs, 0, w+bs*2, -bs)
+
+        Rectange("fill", -bs, 0, bs, h+bs)
+
+        Rectange("fill", -bs, h, w+bs*2, bs)
+
+        Rectange("fill", w, 0, bs, h)
+
+        for bs = 1, 10 do
+            love.graphics.setColor(0,0,0,0.1)
+            Rectange("fill", 0, 0, w, bs)
+            Rectange("fill", 0, bs, bs, h-(bs*2))
+            Rectange("fill", 0, h-bs, w, bs)
+            Rectange("fill", w-bs, bs, bs, h-(bs*2))
+        end
+
     else
-        local movespeedsum = 0
         for _, curPart in pairs(particles) do
-            movespeedsum = movespeedsum + (math.abs(curPart.velx) + math.abs(curPart.vely))
+            addSum(curPart)
             love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], 1)
-            love.graphics.points(curPart.x, curPart.y)
+            Point(curPart.x, curPart.y)
         end
         love.graphics.setColor(1,1,1,1)
-        love.graphics.print(movespeedsum/#particles)
     end
 end
 
 function love.keypressed(key, scancode, isrepeat)
-    if key == "r" and not isrepeat then
+    if key == "escape" then
+        os.exit()
+    end
+    if key == "space" and not isrepeat then
         print("Randomizing Color attractions!")
         randomizeAttractions()
         print(colorAttractions[1][1])
         resetAndStuffs = false
     end
-    if key == "d" and not isrepeat then
-        debug = not debug
+    if key == "1" then
+        fast = false
+        debug = false
     end
-    if key == "v" and not isrepeat then
-        fast = not fast
+    if key == "2" and not isrepeat then
+        debug = true
+    end
+    if key == "3" and not isrepeat then
+        fast = true
+        debug = false
+    end
+    if key == "r" then
+        colorAttractions = {
+            {-1,-1,-1},
+            {-1,-1,-1},
+            {-1,-1,-1},
+        }
     end
 end
 
+local intro = true
+local waterVol = 0
+local maxSpeed = 30
+
 function love.update()
+    if intro == true then
+        movesound:stop()
+        waterVol = waterVol + (0.05 * love.timer.getDelta())
+        if(waterVol >= 0.2) then
+            intro = false
+            waterVol = 0.2
+            movesound:play()
+        end
+        waterloop:setVolume(waterVol)
+    end
+
     updateParticles()
     rebuildWorldGrid()
+
+    movesound:setVolume(0.15 * (movespeedsum/#particles)/maxSpeed)
 end

@@ -1,6 +1,6 @@
 local world = {}
 local particles = {}
-local colorsMax = 3;
+local colorsMax = 4;
 
 local colorAttractions
 
@@ -33,10 +33,26 @@ function initWorld(sizex, sizey, cellSize)
 end
 
 function getCellParticles(gridx, gridy)
-    if gridx > world.sizex or gridy > world.sizey or gridx < 1 or gridy < 1 then
-        return {}
+    local nx = gridx
+    local ny = gridy
+
+    if gridx > world.sizex then
+        nx = 1
     end
-    return world[gridx][gridy]
+
+    if gridx < 1 then
+        nx = world.sizex
+    end
+
+    if gridy > world.sizey then
+        ny = 1
+    end
+
+    if gridy < 1 then
+        ny = world.sizey
+    end
+
+    return world[nx][ny]
 end
 
 function Dist(ax, ay, bx, by)
@@ -117,6 +133,25 @@ function getPartsInRadius(curPart, radius)
     return particleIndexes
 end
 
+function getNearby(curPart)
+    local gridsToCheck = {}
+    local gridx, gridy = curPart.gridspace[1], curPart.gridspace[2]
+
+    for i = 1, #areasToCheck do
+        gridsToCheck[#gridsToCheck+1] = getCellParticles(gridx + areasToCheck[i][1], gridy + areasToCheck[i][2])
+    end
+
+    local particleIndexes = {}
+    for i = 1, #gridsToCheck do
+        for _, partIndx in pairs(gridsToCheck[i]) do
+            if(partIndx ~= curPart.indx) then
+                particleIndexes[#particleIndexes+1] = partIndx
+            end
+        end
+    end
+    return particleIndexes
+end
+
 function findClosest(curParticle, colFilter, indxFilter) -- finds closest in a 3x3 area around current cell, you can set a color filter and exclude certin indexes from the search
     local cx, cy = curParticle.x, curParticle.y
     local gridsToCheck = {}
@@ -181,21 +216,37 @@ end
 function rebuildWorldGrid()
     rebuildWorld()
     for key, value in pairs(particles) do
-        local cx, cy = value.x, value.y
         local wx, wy = world.sizex*world.cellSize, world.sizey*world.cellSize
 
-        if(cx > wx-5) then
-            value.x = 5
-        elseif(cy > wy-5) then
-            value.y = 5
-        elseif(cx < 5) then
-            value.x = wx-5
-        elseif (cy < 5) then
-            value.y = wy-5
+        for _ = 1, 2 do
+            if(value.x > wx-1) then -- Perfect fucking fix but this engine is retarded so i have to run it twice
+                value.x = 1
+            elseif(value.x < 1) then
+                value.x = wx-2
+            elseif (value.y > wy-1) then
+                value.y = 1
+            elseif (value.y < 1) then
+                value.y = wy-2
+            end
         end
 
-        local posx = math.floor(value.x / world.cellSize) + 1
-        local posy = math.floor(value.y / world.cellSize) + 1
+        local posx = math.floor((value.x-0.9) / world.cellSize) + 1
+        local posy = math.floor((value.y-0.9) / world.cellSize) + 1
+
+        if posx > world.cellSize or posx < 1 then
+            print(posx, value.x)
+        end
+        if posy > world.cellSize or posy < 1 then
+            print(posx, value.y)
+        end
+
+        if(world[posx] == nil or world[posx][posy] == nil) then
+            print("-------")
+            print(key)
+            print(posx, value.x, world.sizex)
+            print(posy, value.y, world.sizey)
+            love.timer.sleep(10)
+        end
 
         value.gridspace = {posx, posy}
         table.insert(world[posx][posy], key)
@@ -219,8 +270,8 @@ function normalize(vx, vy)
 end
 
 function distFalloff(curPart, partIndx, dist) -- Wow thats, huh
-    local minDist = 3
-    local maxDist = 50
+    local minDist = 8
+    local maxDist = world.cellSize
     local maxSpeed = 1 -- Normalized Speed
 
     local dirx = (particles[partIndx].x - curPart.x)
@@ -230,7 +281,7 @@ function distFalloff(curPart, partIndx, dist) -- Wow thats, huh
     
     local speed = 0
     if dist < minDist then
-        speed = -math.min(-math.log((dist/minDist)+0.00000000000001), 10)
+        speed = dist - minDist
         collision = true
     elseif dist < maxDist then
         -- https://www.desmos.com/calculator/9kugwpwwwo
@@ -249,7 +300,7 @@ function distFalloff(curPart, partIndx, dist) -- Wow thats, huh
     return dirx * speed, diry * speed, collision -- Returns a normalized vector in the direction of the target particle based on distance
 end
 
-local maxSpeed = 5
+local maxSpeed = 0.5
 local switchTimer = 0
 local swap = false
 
@@ -287,62 +338,51 @@ function boundParticle(curPart)
 end
 
 function updateParticles()
-    painCounter = 0
-    for key, curPart in pairs(particles) do
-        local cdist, cpartIndx = findClosest(curPart, -1) -- Flat out closest particle
-
-        if curPart.velx ~= curPart.velx then
-            print("WTF???")
-            print(cdist, curPart.x - particles[cpartIndx].x, (curPart.x - particles[cpartIndx].x) / cdist)
-            love.timer.sleep(10)
-        end
+    for _, curPart in pairs(particles) do
+        local particlesFound = getNearby(curPart)
 
         curPart.x = curPart.x + (curPart.velx * love.timer.getDelta())
         curPart.y = curPart.y + (curPart.vely * love.timer.getDelta())
-
-        boundParticle(curPart) -- keeps particle in bounds
         
         curPart.velx = curPart.velx + (((curPart.velx)*-1) * love.timer.getDelta()) -- drag code
         curPart.vely = curPart.vely + (((curPart.vely)*-1) * love.timer.getDelta())
 
-        for _, indxes in pairs(particlesFound) do
-        
-        end
+        for _, partIndx in pairs(particlesFound) do
+            local targPart = particles[partIndx]
 
-        for i = 1, #colorAttractions[curPart.col] do
-            local attractValue = colorAttractions[curPart.col][i]
-            local dist, partIndx = findClosest(curPart, i)
-            if partIndx ~= -1 then
-                local tx, ty, colision = distFalloff(curPart, partIndx, dist)
-                if not colision then
-                    curPart.velx = curPart.velx + (tx*attractValue)*maxSpeed -- atract
-                    curPart.vely = curPart.vely + (ty*attractValue)*maxSpeed
-                else
-                    curPart.velx = curPart.velx + tx*maxSpeed -- Collision code
-                    curPart.vely = curPart.vely + ty*maxSpeed
-                end
+            local dist = Dist(curPart.x, curPart.y, targPart.x, targPart.y)
+            local tx, ty, colision = distFalloff(curPart, partIndx, dist)
+
+            local attractValue = colorAttractions[curPart.col][targPart.col]
+            if not colision then
+                curPart.velx = curPart.velx + (tx*attractValue)*maxSpeed -- atract
+                curPart.vely = curPart.vely + (ty*attractValue)*maxSpeed
+            else
+                curPart.velx = curPart.velx + tx*maxSpeed -- Collision code
+                curPart.vely = curPart.vely + ty*maxSpeed
             end
         end
     end
 end
 
 local debug = false
+local fast = false
 
 function love.load()
     math.randomseed(os.clock() + 25012)
     math.random(math.random(-500,500))
-
+    colorsMax = 3
     colorAttractions = {
-        {-1,1,-1},
-        {1,-1,-1},
-        {1,1,1},
+        {0.5,0,0},
+        {0,0.5,0},
+        {0,0,0.5},
     }
 
-    initWorld(40,40,25)
+    initWorld(37,20,50)
     love.window.setMode(world.cellSize * world.sizex, world.cellSize * world.sizey);
     for i=1, 3500 do
         local col = math.random(1,colorsMax)
-        createParticle(math.random(0, world.cellSize * world.sizex) + math.random(),math.random(0, world.cellSize * world.sizey) + math.random(), col)
+        createParticle(math.random(1, world.cellSize * world.sizex)+math.random(),math.random(1, world.cellSize * world.sizey)+math.random(), col)
     end
     updateParticles()
 end
@@ -357,9 +397,9 @@ local colors = {
 
 function love.draw()
     love.graphics.setBackgroundColor(0.07,0.05,0.05)
-    love.graphics.setColor(0,0,1,1)
+    love.graphics.setColor(1,1,1,1)
     if debug then
-        for key, curPart in pairs(particles) do
+        for _, curPart in pairs(particles) do
             if curPart.velx ~= 0 or curPart.vely ~= 0 then
                 love.graphics.setColor(1,0,0)
                 love.graphics.line(curPart.x, curPart.y, curPart.x + curPart.velx, curPart.y + curPart.vely)
@@ -379,41 +419,48 @@ function love.draw()
                 love.graphics.rectangle("line", (x-1)*world.cellSize, (y-1)*world.cellSize, world.cellSize, world.cellSize)
             end
         end
-    else
-        for key, curPart in pairs(particles) do
-            love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3])
+    elseif fast == false then
+        for _, curPart in pairs(particles) do
+            local blurSteps = 4
+            local blurSize = 6
+            local blurMax = 0.07
+            local blurper = blurMax/blurSteps
+
+            for b = 1, blurSteps do
+                love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], blurper)
+                love.graphics.circle("fill", curPart.x, curPart.y, 3 + ((blurSize/blurSteps)*(b)))
+            end
+            love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], 1)
             love.graphics.circle("fill", curPart.x, curPart.y, 3)
         end
-    end
-    local status
-    if swap then
-        status = "Repel from target"
     else
-        status = "Move towards target"
+        local movespeedsum = 0
+        for _, curPart in pairs(particles) do
+            movespeedsum = movespeedsum + (math.abs(curPart.velx) + math.abs(curPart.vely))
+            love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], 1)
+            love.graphics.points(curPart.x, curPart.y)
+        end
+        love.graphics.setColor(1,1,1,1)
+        love.graphics.print(movespeedsum/#particles)
     end
-    love.graphics.setColor(1,0.5,0)
-    love.graphics.print("Cell Count: "..#particles, 0, 17, 0, 1.2, 1.2)
 end
-
-local tap = 0
-local resetAndStuffs = false
 
 function love.keypressed(key, scancode, isrepeat)
     if key == "r" and not isrepeat then
-        resetAndStuffs = true
-    end
-    if key == "d" and not isrepeat then
-        debug = not debug
-    end
-end
-
-function love.update()
-    rebuildWorldGrid()
-    updateParticles()
-    if resetAndStuffs then
         print("Randomizing Color attractions!")
         randomizeAttractions()
         print(colorAttractions[1][1])
         resetAndStuffs = false
     end
+    if key == "d" and not isrepeat then
+        debug = not debug
+    end
+    if key == "v" and not isrepeat then
+        fast = not fast
+    end
+end
+
+function love.update()
+    updateParticles()
+    rebuildWorldGrid()
 end

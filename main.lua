@@ -1,36 +1,48 @@
+-- Dont edit these
 local world = {}
 local particles = {}
-local colorsMax = 4;
-
 local colorAttractions
 local movespeedsum = 0
-
 local xt, yt = 0, 0
+-- Go crazy with these
 
-function Lerp(a, b, t)
+local time_scale = 4; -- Time scale, dont go to crazy with this one as it will break everything
+local total_colors = 6; -- Amount of diffrent colors, upper limit is your imagination
+local total_particles = 8500 -- How many particles to spawn
+local spawn_grouped = false -- If true then spawn all the particles near the center of the world, otherwise spread them out across the world
+
+-- Dont edit these
+local w, h
+local debug_render = false
+local fast_rendering = false
+local waterloop
+local movesound
+local camera
+local zoomTarget = 1
+local intro = true
+local waterVol = 0
+local colors = {
+    {1,0,0},
+    {0,1,0},
+    {0,0,1},
+}
+-- Dont edit these
+
+function Lerp(a, b, t) -- Lerp value A to B with a step size of T
     return a + (b - a) * t
 end
 
-function Clamp(v, min, max)
+function Clamp(v, min, max) -- Clamp a value V between min and max
     if v < min then return min elseif v > max then return max else return v end
 end
 
-function randomizeAttractions()
-    for i = 1, colorsMax do
-        colorAttractions[i] = {}
-        for b = 1, colorsMax do
-            table.insert(colorAttractions[i], math.random(-1000, 1000) * 0.001)
-        end
-    end
-end
-
-function createParticle(x,y,col)
+function CreateParticle(x,y,col) -- Create a particle at x,y set its color to col
     local newParticle = {x=x, y=y, col=col, velx=0, vely=0, gridspace={0,0}, indx = #particles+1}
     particles[#particles+1] = newParticle
     return newParticle
 end
 
-function initWorld(sizex, sizey, cellSize)
+function InitWorld(sizex, sizey, cellSize) -- Self explanitory
     world.cellSize = cellSize;
     world.sizex = sizex;
     world.sizey = sizey;
@@ -43,50 +55,21 @@ function initWorld(sizex, sizey, cellSize)
     return world
 end
 
-function getCellParticles(gridx, gridy)
-    local nx = gridx
-    local ny = gridy
-
-    if gridx > world.sizex then
-        nx = 1
+function GetGridParticles(gridx, gridy) -- Returns the particles inside of the grid at (gridX,gridY)
+    if gridx > world.sizex or gridx < 1 or gridy > world.sizey or gridy < 1 then
+        -- returning nil here since the only way this is happening is when check nearby looks outside of bounds.
+        return nil
     end
 
-    if gridx < 1 then
-        nx = world.sizex
-    end
-
-    if gridy > world.sizey then
-        ny = 1
-    end
-
-    if gridy < 1 then
-        ny = world.sizey
-    end
-
-    return world[nx][ny]
+    return world[gridx][gridy]
 end
 
-function Dist(ax, ay, bx, by)
+function Dist(ax, ay, bx, by) -- Distance between two points
     return math.sqrt(((bx - ax)^2) + ((by - ay)^2))
 end
 
-function ToWorldPos(x,y)
-    return math.floor(x / world.cellSize) + 1, math.floor(y / world.cellSize) + 1
-end
 
-function SplitStr (inputstr, sep)
-    if sep == nil then
-            sep = "%s"
-    end
-    local t={}
-    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
-            table.insert(t, str)
-    end
-    return t
-end
-
-
-local areasToCheck = {
+local areasToCheck = { -- Variable used to tell GetNearby what cells to look at relitive to the current position, add more if you want to search more cells!
     {-1,-1}, -- Top row
     {0,-1},
     {1,-1},
@@ -101,26 +84,8 @@ local areasToCheck = {
 
 }
 
-function getInRadius(px, py, radius)
-    local steps = math.floor(radius/0.2)
-    local grids = {} -- particles around area
-    local numbersDone = {}
-    for s = 1, steps do
-        local size = 0.2 * s
-        for d = 0, 360, 6 do
-            local rad = math.rad(d)
-            local sx, sy = math.sin(rad*size), math.cos(rad*size)
-            local gx, gy = ToWorldPos(sx + px, sy + py)
-            if(numbersDone[gx.."."..gy] == nil) then
-                grids[#grids+1] = getCellParticles(gx, gy)
-                numbersDone[gx.."."..gy] = true
-            end
-        end
-    end
-    return grids
-end
 
-function InTable(tbl, val) -- returns true if value is within a table, false otherwise
+function InTable(tbl, val) -- returns true if value is within a table, false otherwise, Worst case of O(n)
     if tbl == nil then return false end
     if #tbl == 0 then return false end
     for key, value in pairs(tbl) do
@@ -131,25 +96,12 @@ function InTable(tbl, val) -- returns true if value is within a table, false oth
     return false
 end
 
-function getPartsInRadius(curPart, radius)
-    local gridsToCheck = getInRadius(curPart.x, curPart.y, radius)
-    local particleIndexes = {}
-    for i = 1, #gridsToCheck do
-        for _, partIndx in pairs(gridsToCheck[i]) do
-            if(partIndx ~= curPart.indx) then
-                particleIndexes[#particleIndexes+1] = partIndx
-            end
-        end
-    end
-    return particleIndexes
-end
-
-function getNearby(curPart)
+function GetNearby(curPart) -- Gets all particles in a 3x3 area around the current cell and returns them in a list
     local gridsToCheck = {}
     local gridx, gridy = curPart.gridspace[1], curPart.gridspace[2]
 
     for i = 1, #areasToCheck do
-        gridsToCheck[#gridsToCheck+1] = getCellParticles(gridx + areasToCheck[i][1], gridy + areasToCheck[i][2])
+        gridsToCheck[#gridsToCheck+1] = GetGridParticles(gridx + areasToCheck[i][1], gridy + areasToCheck[i][2])
     end
 
     local particleIndexes = {}
@@ -163,13 +115,13 @@ function getNearby(curPart)
     return particleIndexes
 end
 
-function findClosest(curParticle, colFilter, indxFilter) -- finds closest in a 3x3 area around current cell, you can set a color filter and exclude certin indexes from the search
+function FindClosest(curParticle, colFilter, indxFilter) -- finds closest in a 3x3 area around current cell, you can set a color filter and exclude certin indexes from the search
     local cx, cy = curParticle.x, curParticle.y
     local gridsToCheck = {}
     local indxFilter = indxFilter or nil
     local gridx, gridy = curParticle.gridspace[1], curParticle.gridspace[2]
     for i = 1, #areasToCheck do
-        gridsToCheck[#gridsToCheck+1] = getCellParticles(gridx + areasToCheck[i][1], gridy + areasToCheck[i][2])
+        gridsToCheck[#gridsToCheck+1] = GetGridParticles(gridx + areasToCheck[i][1], gridy + areasToCheck[i][2])
     end
     
     local particlesToCheck = {}
@@ -208,7 +160,7 @@ function findClosest(curParticle, colFilter, indxFilter) -- finds closest in a 3
     return closestDist, closestIndx
 end
 
-function rebuildWorld()
+function EmptyWorld()
     local sx = world.sizex
     local sy = world.sizey
     local cellSize = world.cellSize
@@ -224,58 +176,40 @@ function rebuildWorld()
     end
 end
 
-function rebuildWorldGrid()
-    rebuildWorld()
+function RebuildWorldGrid()
+    EmptyWorld()
     for key, value in pairs(particles) do
-        local wx, wy = world.sizex*world.cellSize, world.sizey*world.cellSize
-
-        for _ = 1, 2 do
-            if(value.x > wx-1) then -- Perfect fucking fix but this engine is retarded so i have to run it twice
-                value.x = 1
-            elseif(value.x < 1) then
-                value.x = wx-2
-            elseif (value.y > wy-1) then
-                value.y = 1
-            elseif (value.y < 1) then
-                value.y = wy-2
-            end
-        end
-
         local posx = math.floor((value.x-0.9) / world.cellSize) + 1
         local posy = math.floor((value.y-0.9) / world.cellSize) + 1
 
-        -- if posx > world.cellSize or posx < 1 then
-        --     print(posx, value.x)
-        -- end
-        -- if posy > world.cellSize or posy < 1 then
-        --     print(posx, value.y)
-        -- end
-
-        -- if(world[posx] == nil or world[posx][posy] == nil) then
-        --     print("-------")
-        --     print(key)
-        --     print(posx, value.x, world.sizex)
-        --     print(posy, value.y, world.sizey)
-        --     love.timer.sleep(10)
-        -- end
-
         value.gridspace = {posx, posy}
         table.insert(world[posx][posy], key)
+
+        -- replace above code with below code if this function starts giving you issues
+        -- local wx, wy = world.sizex*world.cellSize, world.sizey*world.cellSize
+        -- local posx, posy = 0, 0 
+        -- for _ = 1, 2 do -- Bodge fix
+        --     if(value.x > wx-1) 
+        --         value.x = 1
+        --     elseif(value.x < 1) then
+        --         value.x = wx-2
+        --     elseif (value.y > wy-1) then
+        --         value.y = 1
+        --     elseif (value.y < 1) then
+        --         value.y = wy-2
+        --     end
+        -- end
+        --
+        -- local posx = math.floor((value.x-0.9) / world.cellSize) + 1
+        -- local posy = math.floor((value.y-0.9) / world.cellSize) + 1
+
+        -- value.gridspace = {posx, posy}
+        -- table.insert(world[posx][posy], key)
     end
 end
 
 
-function clampMinMax(value, minMax)
-    if value > minMax then
-        return minMax
-    end
-    if value < -minMax then
-        return -minMax
-    end
-    return value
-end
-
-function normalize(vx, vy)
+function Normalize(vx, vy)
     local mag = math.sqrt((vx ^ 2) + (vy ^ 2))
     return (vx/mag), (vy/mag)
 end
@@ -288,7 +222,7 @@ function distFalloff(curPart, partIndx, dist) -- Wow thats, huh
     local dirx = (particles[partIndx].x - curPart.x)
     local diry = (particles[partIndx].y - curPart.y)
     local collision = false
-    dirx, diry = normalize(dirx, diry)
+    dirx, diry = Normalize(dirx, diry)
     
     local speed = 0
     if dist < minDist then
@@ -311,23 +245,6 @@ function distFalloff(curPart, partIndx, dist) -- Wow thats, huh
     return dirx * speed, diry * speed, collision -- Returns a normalized vector in the direction of the target particle based on distance
 end
 
-local maxSpeed = 0.5
-local switchTimer = 0
-local swap = false
-
-function collisionChecks()
-    for _, curPart in pairs(particles) do
-        local cdist, cpartIndx = findClosest(curPart, -1) -- Flat out closest particle
-
-        if cdist <= 6 and cpartIndx ~= -1 then -- For collisions
-            curPart.x = curPart.x + ((curPart.x - particles[cpartIndx].x)+0.00000000001)/cdist -- repel
-            curPart.y = curPart.y + ((curPart.y - particles[cpartIndx].y)+0.00000000001)/cdist
-        end
-
-        boundParticle(curPart)
-    end
-end
-
 function boundParticle(curPart)
     if curPart.x > world.cellSize * world.sizex then
         curPart.x = world.cellSize * world.sizex
@@ -348,17 +265,30 @@ function boundParticle(curPart)
     end
 end
 
-function updateParticles()
+function getDelta()
+    return love.timer.getDelta() * time_scale
+end
+
+function UpdateParticles()
+    local maxSpeed = 0.5
+    local maxEffectors = 50
+
     for _, curPart in pairs(particles) do
-        local particlesFound = getNearby(curPart)
+        local particlesFound = GetNearby(curPart)
+        local iterCount = #particlesFound
 
-        curPart.x = curPart.x + (curPart.velx * love.timer.getDelta())
-        curPart.y = curPart.y + (curPart.vely * love.timer.getDelta())
+        curPart.x = curPart.x + (curPart.velx * getDelta())
+        curPart.y = curPart.y + (curPart.vely * getDelta())
         
-        curPart.velx = curPart.velx + (((curPart.velx)*-1) * love.timer.getDelta()) -- drag code
-        curPart.vely = curPart.vely + (((curPart.vely)*-1) * love.timer.getDelta())
+        curPart.velx = curPart.velx + (((curPart.velx)*-1) * getDelta()) -- drag code
+        curPart.vely = curPart.vely + (((curPart.vely)*-1) * getDelta())
 
-        for _, partIndx in pairs(particlesFound) do
+        if #particlesFound > maxEffectors then
+            iterCount = maxEffectors
+        end
+
+        for i=1, iterCount do
+            local partIndx = particlesFound[i]
             local targPart = particles[partIndx]
 
             local dist = Dist(curPart.x, curPart.y, targPart.x, targPart.y)
@@ -373,31 +303,53 @@ function updateParticles()
                 curPart.vely = curPart.vely + ty*maxSpeed
             end
         end
+
+        curPart.x = Clamp(curPart.x, 1, world.cellSize * world.sizex)
+        curPart.y = Clamp(curPart.y, 1, world.cellSize * world.sizey)
     end
 end
 
-local w, h
-local debug = false
-local fast = false
 
-local waterloop
-local movesound
-local globalTransform
-local camera
+function RandomizeAttractions(cMax)
+    colorAttractions = {}
+    for i = 1, cMax do
+        colorAttractions[i] = {}
+        for b = 1, cMax do
+            table.insert(colorAttractions[i], math.random(-1000, 1000) * 0.001)
+        end
+    end
+end
+
+function MassSetAttractions(setTo)
+    colorAttractions = {}
+    for i = 1, total_colors do
+        colorAttractions[i] = {}
+        for b = 1, total_colors do
+            table.insert(colorAttractions[i], setTo)
+        end
+    end
+end
+
+function AddSum(curPart)
+    movespeedsum = movespeedsum + (math.abs(curPart.velx) + math.abs(curPart.vely))
+end
+
+function love.mousemoved(x, y, dx, dy)
+    if love.mouse.isDown(1) then
+        xt = xt + dx
+        yt = yt + dy
+    end
+end
+
+function love.wheelmoved(x, y)
+    zoomTarget = zoomTarget + (y * 0.125)
+end
 
 function love.load()
-
-
-    local flags = {
-        msaa=4,
-        fullscreen = true
-    }
-
-    love.window.setMode(900, 900, flags);
-
+    love.window.setMode(100, 100, {msaa=4,fullscreen = true});
+    love.window.setTitle("Particle Life 2")
     love.window.setPosition(0,0,0)
 
-    globalTransform = love.math.newTransform()
     math.randomseed(os.clock() + 25012)
     math.random(math.random(-500,500))
 
@@ -413,22 +365,30 @@ function love.load()
     movesound:setLooping(true)
     movesound:setPitch(1.5)
 
-    colorsMax = 3
-    colorAttractions = {
-        {-1,-1,-1},
-        {-1,-1,-1},
-        {-1,-1,-1},
-    }
+    MassSetAttractions(-1)
+
+    -- Generate extra colors if needed
+    if total_colors > 3 then
+        for i = 4, total_colors, 1 do
+            colors[i] = {0.1+math.random(), 0.1+math.random(), 0.1+math.random()}
+        end
+    end
 
     w, h = love.graphics.getWidth(), love.graphics.getHeight()
 
-    initWorld(math.ceil(w/50)+1, math.ceil(h/50)+1, 50)
+    InitWorld(math.ceil(w/50)*2, math.ceil(h/50)*2, 50)
 
-    for i=1, 5000 do
-        local col = math.random(1,colorsMax)
-        createParticle(math.random(1, world.cellSize * world.sizex)+math.random(),math.random(1, world.cellSize * world.sizey)+math.random(), col)
+    for i=1, total_particles do
+        local col = math.random(1,total_colors)
+        if spawn_grouped then
+            --Create in center
+            CreateParticle(Clamp(w/2 + math.random(1, w)+math.random(),1, world.cellSize * world.sizex), Clamp(h/2 + math.random(1, h)+math.random(),1, world.cellSize * world.sizey), col)
+        else
+            -- just fill
+            CreateParticle(math.random(1, world.cellSize*world.sizex)+math.random(), math.random(1, world.cellSize*world.sizey)+math.random(), col)
+        end
     end
-    updateParticles()
+    UpdateParticles()
 
     local wW, wH = world.cellSize*world.sizex, world.cellSize*world.sizey
 
@@ -438,169 +398,10 @@ function love.load()
 
 
     for i = 1, 20, 1 do
-        updateParticles()
-        rebuildWorldGrid()
+        UpdateParticles()
+        RebuildWorldGrid()
     end
 end
-
-local colors = {
-    {0,0,1},
-    {1,0,0},
-    {0,1,0},
-    {1,0.5,0},
-    {1,1,1}
-}
-
-function addSum(curPart)
-    movespeedsum = movespeedsum + (math.abs(curPart.velx) + math.abs(curPart.vely))
-end
-function Line(sx, sy, ex, ey)
-    love.graphics.line(sx,sy,ex,ey)
-end
-function Circle(mode, x, y, size)
-    love.graphics.circle(mode,x,y,size)
-end
-function Point(x, y)
-    love.graphics.points(x,y)
-end
-function Rectange(mode,x,y,width, height)
-    love.graphics.rectangle(mode,x,y,width,height)
-end
-
-function love.mousemoved(x, y, dx, dy)
-    if love.mouse.isDown(1) then
-        xt = xt + dx
-        yt = yt + dy
-    end
-end
-
-local zoomTarget = 1
-
-function love.wheelmoved(x, y)
-    zoomTarget = zoomTarget + (y * 0.125)
-end
-
-
-function love.draw()
-    local mx, my = love.mouse.getPosition()
-
-    zoomTarget = Clamp(zoomTarget, 1, 5)
-
-    camera.zoom = Lerp(camera.zoom, zoomTarget, 4 * love.timer.getDelta())
-
-    camera.x = Lerp(camera.x, xt, love.timer.getDelta())
-    camera.y = Lerp(camera.y, yt, love.timer.getDelta())
-
-    love.graphics.scale(camera.zoom, camera.zoom)
-    love.graphics.translate(camera.x + w/2/camera.zoom, camera.y + h/2/camera.zoom)
-    movespeedsum = 0
-
-    local w, h = world.sizex * world.cellSize, world.sizey * world.cellSize
-
-    love.graphics.setColor(0.07,0.05,0.05)
-    Rectange("fill", 0, 0, w, h)
-
-    love.graphics.setColor(1,1,1)
-    if debug then
-        for _, curPart in pairs(particles) do
-            addSum(curPart)
-            if curPart.velx ~= 0 or curPart.vely ~= 0 then
-                love.graphics.setColor(1,0,0)
-                Line(curPart.x, curPart.y, curPart.x + curPart.velx, curPart.y + curPart.vely)
-            else
-                love.graphics.setColor(1,1,1)
-            end
-            Circle("fill", curPart.x, curPart.y, 2)
-        end
-        for x = 1, world.sizex do
-            for y = 1, world.sizey do
-                if #world[x][y] > 0 then
-                    love.graphics.setColor(0,1,0, 0.15)
-                else
-                    love.graphics.setColor(1,1,1, 0.1)
-                end
-
-                love.graphics.rectangle("line", (x-1)*world.cellSize, (y-1)*world.cellSize, world.cellSize, world.cellSize)
-            end
-        end
-    elseif fast == false then
-        for _, curPart in pairs(particles) do
-            addSum(curPart)
-            local blurSteps = 4
-            local blurSize = 6
-            local blurMax = 0.07
-            local blurper = blurMax/blurSteps
-
-            for b = 1, blurSteps do
-                love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], blurper)
-                Circle("fill", curPart.x, curPart.y, 3 + ((blurSize/blurSteps)*(b)))
-            end
-            love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], 1)
-            Circle("fill", curPart.x, curPart.y, 3)
-        end
-        love.graphics.setColor(0,0,0,1)
-
-        local bs = 15
-
-        Rectange("fill", -bs, 0, w+bs*2, -bs)
-
-        Rectange("fill", -bs, 0, bs, h+bs)
-
-        Rectange("fill", -bs, h, w+bs*2, bs)
-
-        Rectange("fill", w, 0, bs, h)
-
-        for bs = 1, 10 do
-            love.graphics.setColor(0,0,0,0.1)
-            Rectange("fill", 0, 0, w, bs)
-            Rectange("fill", 0, bs, bs, h-(bs*2))
-            Rectange("fill", 0, h-bs, w, bs)
-            Rectange("fill", w-bs, bs, bs, h-(bs*2))
-        end
-
-    else
-        for _, curPart in pairs(particles) do
-            addSum(curPart)
-            love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], 1)
-            Point(curPart.x, curPart.y)
-        end
-        love.graphics.setColor(1,1,1,1)
-    end
-end
-
-function love.keypressed(key, scancode, isrepeat)
-    if key == "escape" then
-        os.exit()
-    end
-    if key == "space" and not isrepeat then
-        print("Randomizing Color attractions!")
-        randomizeAttractions()
-        print(colorAttractions[1][1])
-        resetAndStuffs = false
-    end
-    if key == "1" then
-        fast = false
-        debug = false
-    end
-    if key == "2" and not isrepeat then
-        debug = true
-    end
-    if key == "3" and not isrepeat then
-        fast = true
-        debug = false
-    end
-    if key == "r" then
-        colorAttractions = {
-            {-1,-1,-1},
-            {-1,-1,-1},
-            {-1,-1,-1},
-        }
-    end
-end
-
-local intro = true
-local waterVol = 0
-local maxSpeed = 30
 
 function love.update()
     if intro == true then
@@ -614,8 +415,137 @@ function love.update()
         waterloop:setVolume(waterVol)
     end
 
-    updateParticles()
-    rebuildWorldGrid()
+    UpdateParticles()
+    RebuildWorldGrid()
 
-    movesound:setVolume(0.15 * (movespeedsum/#particles)/maxSpeed)
+    movesound:setVolume(0.15 * (movespeedsum/#particles)/30)
+end
+
+function love.draw()
+    local mx, my = love.mouse.getPosition()
+    movespeedsum = 0
+
+    zoomTarget = Clamp(zoomTarget, 0.2, 100)
+
+    camera.zoom = Lerp(camera.zoom, zoomTarget, 4 * love.timer.getDelta())
+
+    if camera.zoom < 0.4 and debug_render == false then
+        fast_rendering = true
+    else
+        fast_rendering = false
+    end
+
+    camera.x = Lerp(camera.x, xt, love.timer.getDelta())
+    camera.y = Lerp(camera.y, yt, love.timer.getDelta())
+
+    love.graphics.scale(camera.zoom, camera.zoom)
+    love.graphics.translate(camera.x + w/2/camera.zoom, camera.y + h/2/camera.zoom)
+
+    local w, h = world.sizex * world.cellSize, world.sizey * world.cellSize
+
+    -- Background
+    love.graphics.setColor(0.05,0.05,0.07)
+    love.graphics.rectangle("fill", 0, 0, w, h)
+    love.graphics.setColor(1,1,1)
+
+    if debug_render then
+        for _, curPart in pairs(particles) do
+            AddSum(curPart)
+            if curPart.velx ~= 0 or curPart.vely ~= 0 then
+                love.graphics.setColor(1,0,0)
+                love.graphics.line(curPart.x, curPart.y, curPart.x + curPart.velx, curPart.y + curPart.vely)
+            else
+                love.graphics.setColor(1,1,1)
+            end
+            love.graphics.circle("fill", curPart.x, curPart.y, 2)
+        end
+        for x = 1, world.sizex do
+            for y = 1, world.sizey do
+                if #world[x][y] > 0 then
+                    love.graphics.setColor(0,1,0, 0.15)
+                else
+                    love.graphics.setColor(1,1,1, 0.1)
+                end
+
+                love.graphics.rectangle("line", (x-1)*world.cellSize, (y-1)*world.cellSize, world.cellSize, world.cellSize)
+            end
+        end
+    elseif fast_rendering == false then
+        for _, curPart in pairs(particles) do
+            local bloomSteps = 2
+            local bloomSize = 12
+            local bloomMax = 0.07
+
+            if zoomTarget < 1 then -- Gods greatest LOD system i swear
+                bloomSteps = 2
+            end
+            if zoomTarget > 1 then
+                bloomSteps = 3
+            end
+            if zoomTarget > 2 then
+                bloomSteps = 4
+            end
+            if zoomTarget > 4 then
+                bloomSteps = 5
+            end
+            
+            local bloomPer = bloomMax/bloomSteps
+
+            for b = 1, bloomSteps do
+                love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], bloomPer)
+                love.graphics.circle("fill", curPart.x, curPart.y, 3 + ((bloomSize/bloomSteps)*(b)))
+            end
+        end
+
+        for _, curPart in pairs(particles) do
+            AddSum(curPart)
+            love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], 1)
+            love.graphics.circle("fill", curPart.x, curPart.y, 3)
+        end
+        love.graphics.setColor(0,0,0,1)
+
+        local bs = 15
+
+        love.graphics.rectangle("fill", -bs, 0, w+bs*2, -bs)
+
+        love.graphics.rectangle("fill", -bs, 0, bs, h+bs)
+
+        love.graphics.rectangle("fill", -bs, h, w+bs*2, bs)
+
+        love.graphics.rectangle("fill", w, 0, bs, h)
+
+        for bs = 1, 10 do
+            love.graphics.setColor(0,0,0,0.1)
+            love.graphics.rectangle("fill", 0, 0, w, bs)
+            love.graphics.rectangle("fill", 0, bs, bs, h-(bs*2))
+            love.graphics.rectangle("fill", 0, h-bs, w, bs)
+            love.graphics.rectangle("fill", w-bs, bs, bs, h-(bs*2))
+        end
+
+    else
+        for _, curPart in pairs(particles) do
+            AddSum(curPart)
+            love.graphics.setColor(colors[curPart.col][1], colors[curPart.col][2], colors[curPart.col][3], 1)
+            love.graphics.points(curPart.x, curPart.y)
+        end
+        love.graphics.setColor(1,1,1,1)
+    end
+end
+
+function love.keypressed(key, scancode, isrepeat)
+    if key == "escape" then
+        os.exit()
+    end
+    if key == "space" and not isrepeat then
+        print("Randomizing Color attractions!")
+        RandomizeAttractions(total_colors)
+        print(colorAttractions[1][1])
+        resetAndStuffs = false
+    end
+    if key == "1" and not isrepeat then
+        debug_render = not debug_render
+    end
+    if key == "r" then
+        MassSetAttractions(-1)
+    end
 end

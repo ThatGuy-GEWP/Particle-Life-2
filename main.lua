@@ -8,8 +8,8 @@ local xt, yt = 0, 0
 
 local time_scale = 4; -- Time scale, dont go to crazy with this one as it will break everything
 local total_colors = 6; -- Amount of diffrent colors, upper limit is your imagination
-local total_particles = 8500 -- How many particles to spawn
-local spawn_grouped = false -- If true then spawn all the particles near the center of the world, otherwise spread them out across the world
+local total_particles = 8000 -- How many particles to spawn
+local spawn_grouped = true -- If true then spawn all the particles near the center of the world, otherwise spread them out across the world
 
 -- Dont edit these
 local w, h
@@ -112,6 +112,24 @@ function GetNearby(curPart) -- Gets all particles in a 3x3 area around the curre
             end
         end
     end
+    return particleIndexes
+end
+
+function GetInCell(curPart)
+    local myGrid = GetGridParticles(curPart.gridspace[1], curPart.gridspace[2])
+
+    local particleIndexes = {}
+
+    for _, partIndx in pairs(myGrid) do
+        if(partIndx ~= curPart.indx) then
+            particleIndexes[#particleIndexes+1] = partIndx
+        end
+    end
+
+    if #myGrid == 0 then
+        return nil -- only i am in this cell
+    end
+
     return particleIndexes
 end
 
@@ -266,28 +284,19 @@ function boundParticle(curPart)
 end
 
 function getDelta()
-    return love.timer.getDelta() * time_scale
+    return love.timer.getDelta()
 end
 
-function UpdateParticles()
-    local maxSpeed = 0.5
-    local maxEffectors = 50
 
-    for _, curPart in pairs(particles) do
+function newRoutine(from, to, yeildAmount)
+    local yeildAmount = yeildAmount or 500
+    local curYeildAmount = 0
+    for pr = from+1, to do
+        local curPart = particles[pr]
         local particlesFound = GetNearby(curPart)
         local iterCount = #particlesFound
 
-        curPart.x = curPart.x + (curPart.velx * getDelta())
-        curPart.y = curPart.y + (curPart.vely * getDelta())
-        
-        curPart.velx = curPart.velx + (((curPart.velx)*-1) * getDelta()) -- drag code
-        curPart.vely = curPart.vely + (((curPart.vely)*-1) * getDelta())
-
-        if #particlesFound > maxEffectors then
-            iterCount = maxEffectors
-        end
-
-        for i=1, iterCount do
+        for i = 1, iterCount do
             local partIndx = particlesFound[i]
             local targPart = particles[partIndx]
 
@@ -296,16 +305,84 @@ function UpdateParticles()
 
             local attractValue = colorAttractions[curPart.col][targPart.col]
             if not colision then
-                curPart.velx = curPart.velx + (tx*attractValue)*maxSpeed -- atract
-                curPart.vely = curPart.vely + (ty*attractValue)*maxSpeed
+                curPart.velx = curPart.velx + (tx * attractValue) -- atract
+                curPart.vely = curPart.vely + (ty * attractValue)
             else
-                curPart.velx = curPart.velx + tx*maxSpeed -- Collision code
-                curPart.vely = curPart.vely + ty*maxSpeed
+                curPart.velx = curPart.velx + tx * 1 -- Collision code
+                curPart.vely = curPart.vely + ty * 1
             end
         end
 
-        curPart.x = Clamp(curPart.x, 1, world.cellSize * world.sizex)
-        curPart.y = Clamp(curPart.y, 1, world.cellSize * world.sizey)
+        curYeildAmount = curYeildAmount + 1
+        if curYeildAmount == yeildAmount then
+            coroutine.yield()
+            curYeildAmount = 0
+        end
+    end
+end
+
+
+
+local threadA = coroutine.create(newRoutine)
+local threadB = coroutine.create(newRoutine)
+local threadC = coroutine.create(newRoutine)
+local threadD = coroutine.create(newRoutine)
+
+local doneCounter = 0
+
+function UpdateParticles()
+    local maxSpeed = 4
+    local maxEffectors = 150
+    local yeildTarget = total_particles/4
+
+    local splitAmount = (total_particles/4)-1
+
+    if coroutine.status(threadA) == "suspended" then
+        coroutine.resume(threadA, 0, splitAmount, yeildTarget)
+    end
+    if coroutine.status(threadA) == "dead" then
+        doneCounter = doneCounter + 1
+    end    
+
+    if coroutine.status(threadB) == "suspended" then
+        coroutine.resume(threadB, splitAmount, splitAmount*2, yeildTarget)
+    end
+    if coroutine.status(threadB) == "dead" then
+        doneCounter = doneCounter + 1
+    end    
+
+    if coroutine.status(threadC) == "suspended" then
+        coroutine.resume(threadC, splitAmount*2, splitAmount*3, yeildTarget)
+    end
+    if coroutine.status(threadC) == "dead" then
+        doneCounter = doneCounter + 1
+    end    
+
+    if coroutine.status(threadD) == "suspended" then
+        coroutine.resume(threadD, splitAmount*3, splitAmount*4, yeildTarget)
+    end
+    if coroutine.status(threadD) == "dead" then
+        doneCounter = doneCounter + 1
+    end    
+
+    if(doneCounter == 4) then
+        RebuildWorldGrid()
+        threadA = coroutine.create(newRoutine)
+        threadB = coroutine.create(newRoutine)
+        threadC = coroutine.create(newRoutine)
+        threadD = coroutine.create(newRoutine)
+
+        for _, curPart in pairs(particles) do
+            curPart.x = curPart.x + (curPart.velx * getDelta())
+            curPart.y = curPart.y + (curPart.vely * getDelta())
+    
+            curPart.velx = curPart.velx + (((curPart.velx) * -1) * getDelta()) -- drag code
+            curPart.vely = curPart.vely + (((curPart.vely) * -1) * getDelta())
+
+            curPart.x = Clamp(curPart.x, 1, world.cellSize * world.sizex)
+            curPart.y = Clamp(curPart.y, 1, world.cellSize * world.sizey)
+        end
+        doneCounter = 0
     end
 end
 
@@ -416,7 +493,6 @@ function love.update()
     end
 
     UpdateParticles()
-    RebuildWorldGrid()
 
     movesound:setVolume(0.15 * (movespeedsum/#particles)/30)
 end
@@ -476,6 +552,10 @@ function love.draw()
             local bloomSize = 12
             local bloomMax = 0.07
 
+            if zoomTarget < 0.8 then
+                bloomSteps = 1
+                bloomSize = 8
+            end
             if zoomTarget < 1 then -- Gods greatest LOD system i swear
                 bloomSteps = 2
             end
